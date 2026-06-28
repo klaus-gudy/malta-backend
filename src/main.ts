@@ -8,12 +8,14 @@ async function bootstrap() {
   // All routes are served under /api (e.g. /api/customers).
   app.setGlobalPrefix('api');
 
-  // Validate & strip request payloads against the DTOs.
+  // Validate & strip request payloads against the DTOs. stopAtFirstError keeps
+  // one clear message per field instead of stacking every failed constraint.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      stopAtFirstError: true,
     }),
   );
 

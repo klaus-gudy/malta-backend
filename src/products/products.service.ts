@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Product } from './entities/product.entity';
@@ -22,6 +26,16 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto): Promise<Product> {
+    if (dto.max < dto.min) {
+      throw new BadRequestException(
+        'Maximum amount must be greater than or equal to the minimum amount.',
+      );
+    }
+    if (dto.maxTerm < dto.minTerm) {
+      throw new BadRequestException(
+        'Maximum term must be greater than or equal to the minimum term.',
+      );
+    }
     const count = await this.products.count();
     const id = 'PRD-' + String(count + 1).padStart(2, '0');
     const product = this.products.create({
