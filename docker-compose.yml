@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: malta-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-malta}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-malta}
+      POSTGRES_DB: ${DB_DATABASE:-malta_lms}
+    ports:
+      # Host port 5433 to avoid clashing with a local Postgres on 5432.
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - malta_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-malta} -d ${DB_DATABASE:-malta_lms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # NestJS API. Built from the local Dockerfile; talks to Postgres over the
+  # compose network (host "postgres", port 5432 — not the host's 5433).
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: malta-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3030
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-malta}
+      DB_PASSWORD: ${DB_PASSWORD:-malta}
+      DB_DATABASE: ${DB_DATABASE:-malta_lms}
+      DB_SYNCHRONIZE: ${DB_SYNCHRONIZE:-true}
+      DB_SEED: ${DB_SEED:-true}
+    ports:
+      - "${PORT:-3030}:3030"
+
+  # Lightweight web UI for inspecting the database (http://localhost:8080).
+  adminer:
+    image: adminer:4
+    container_name: malta-adminer
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "8080:8080"
+
+volumes:
+  malta_pgdata:
