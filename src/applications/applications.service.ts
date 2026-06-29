@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Application } from './entities/application.entity';
@@ -7,12 +11,18 @@ import {
   PatchApplicationDto,
 } from './dto/application.dto';
 import { roleMeta } from '../common/role-meta';
+import { ProductsService } from '../products/products.service';
+import { CustomersService } from '../customers/customers.service';
+
+const tzs = (n: number) => `TZS ${Number(n).toLocaleString('en-US')}`;
 
 @Injectable()
 export class ApplicationsService {
   constructor(
     @InjectRepository(Application)
     private readonly applications: Repository<Application>,
+    private readonly products: ProductsService,
+    private readonly customers: CustomersService,
   ) {}
 
   findAll(): Promise<Application[]> {
@@ -26,6 +36,34 @@ export class ApplicationsService {
   }
 
   async create(dto: CreateApplicationDto): Promise<Application> {
+    const amount = Number(dto.amount);
+    const term = Number(dto.term || 9);
+
+    // Validate amount & tenure against the chosen product's limits.
+    const product = await this.products.findOne(dto.product).catch(() => {
+      throw new BadRequestException(`Unknown product "${dto.product}".`);
+    });
+    if (amount < product.min || amount > product.max) {
+      throw new BadRequestException(
+        `Requested amount must be between ${tzs(product.min)} and ${tzs(product.max)} for ${product.name}.`,
+      );
+    }
+    if (term < product.minTerm || term > product.maxTerm) {
+      throw new BadRequestException(
+        `Tenure must be between ${product.minTerm} and ${product.maxTerm} months for ${product.name}.`,
+      );
+    }
+
+    // A submitted application requires the borrower's KYC not to be rejected.
+    const customer = await this.customers.findOne(dto.customer).catch(() => {
+      throw new BadRequestException(`Unknown borrower "${dto.customer}".`);
+    });
+    if (dto.status === 'Submitted' && customer.kyc === 'Rejected') {
+      throw new BadRequestException(
+        'Borrower KYC is rejected — re-evaluation is required before this application can be submitted.',
+      );
+    }
+
     // Id scheme from the frontend: "LAP-2026-00" + (count + 43).
     const count = await this.applications.count();
     const n = count + 43;
@@ -35,8 +73,8 @@ export class ApplicationsService {
       id,
       customer: dto.customer,
       product: dto.product,
-      amount: Number(dto.amount),
-      term: Number(dto.term || 9),
+      amount,
+      term,
       purpose: dto.purpose || '—',
       status: dto.status,
       officer: roleMeta[role].name,
