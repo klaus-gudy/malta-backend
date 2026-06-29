@@ -10,6 +10,21 @@ import { ProductsService } from '../products/products.service';
 // The app's "today" — matches the seeded 2026 demo timeline.
 const today = () => new Date().toISOString().slice(0, 10);
 
+const addMonths = (iso: string, n: number): string => {
+  const d = new Date(iso);
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+// How many penalty periods an overdue installment has accrued: 1 the moment it
+// is missed, then +1 for each completed monthly period it stays unpaid.
+const overduePeriods = (dueDate: string, now: string): number => {
+  if (dueDate >= now) return 0;
+  let periods = 1;
+  while (addMonths(dueDate, periods) <= now) periods++;
+  return periods;
+};
+
 @Injectable()
 export class RepaymentsService {
   constructor(
@@ -158,28 +173,35 @@ export class RepaymentsService {
     const now = today();
 
     const existing = await this.charges.find({ where: { loanId } });
+    // Idempotency key: which (installment, period) penalties already exist.
     const hasPenalty = new Set(
       existing
         .filter((c) => c.type === 'Late payment penalty')
-        .map((c) => c.installmentN),
+        .map((c) => `${c.installmentN}:${c.period}`),
     );
 
     for (const inst of rows) {
       const overdue = inst.status !== 'Paid' && inst.dueDate < now;
       if (overdue) {
         if (inst.status !== 'Partial') inst.status = 'Overdue';
-        if (!hasPenalty.has(inst.n)) {
-          await this.charges.save(
-            this.charges.create({
-              loanId,
-              installmentN: inst.n,
-              type: 'Late payment penalty',
-              amount: Math.round((inst.total * penaltyPct) / 100),
-              date: inst.dueDate,
-              status: 'Outstanding',
-            }),
-          );
-          hasPenalty.add(inst.n);
+        // Accrue one penalty per overdue period (penalty grows the longer it
+        // stays unpaid). Penalty per period = installment total × penalty%.
+        const periods = overduePeriods(inst.dueDate, now);
+        for (let p = 1; p <= periods; p++) {
+          if (!hasPenalty.has(`${inst.n}:${p}`)) {
+            await this.charges.save(
+              this.charges.create({
+                loanId,
+                installmentN: inst.n,
+                period: p,
+                type: 'Late payment penalty',
+                amount: Math.round((inst.total * penaltyPct) / 100),
+                date: addMonths(inst.dueDate, p - 1),
+                status: 'Outstanding',
+              }),
+            );
+            hasPenalty.add(`${inst.n}:${p}`);
+          }
         }
       } else if (inst.status === 'Overdue') {
         // No longer overdue (date moved or paid) — reset to Due.
@@ -210,6 +232,50 @@ export class RepaymentsService {
   async getCharges(loanId: string): Promise<LoanCharge[]> {
     await this.accrue(loanId);
     return this.charges.find({ where: { loanId }, order: { date: 'DESC' } });
+  }
+
+  // Repayment metrics for the loan account header — derived entirely from the
+  // schedule, payments and charges. `progress` exceeds 100% on overpayment.
+  async getSummary(loanId: string) {
+    await this.accrue(loanId);
+    const loan = await this.loans.findOne({ where: { id: loanId } });
+    const rows = await this.installments.find({ where: { loanId } });
+    const pays = await this.payments.find({ where: { loanId } });
+    const chgs = await this.charges.find({ where: { loanId } });
+
+    const sum = (arr: number[]) => arr.reduce((s, n) => s + n, 0);
+    const scheduledTotal = sum(rows.map((r) => r.total));
+    const penaltyTotal = sum(chgs.map((c) => c.amount));
+    const totalBilled = scheduledTotal + penaltyTotal;
+    const totalPaid = sum(pays.map((p) => p.amount));
+    const repaid = sum(rows.map((r) => r.paidAmount));
+    const outstandingInstal = sum(rows.map((r) => r.total - r.paidAmount));
+    const outstandingCharges = sum(
+      chgs.filter((c) => c.status === 'Outstanding').map((c) => c.amount),
+    );
+    const outstanding = outstandingInstal + outstandingCharges;
+    const overpaid = Math.max(0, totalPaid - totalBilled);
+    const paidInstallments = rows.filter((r) => r.status === 'Paid').length;
+    // Progress is paid vs. everything billed; > 100% when the borrower overpays.
+    const progress = totalBilled > 0
+      ? Math.round((totalPaid / totalBilled) * 100)
+      : 0;
+
+    return {
+      loanId,
+      principal: loan?.principal ?? 0,
+      term: loan?.term ?? rows.length,
+      status: loan?.status ?? 'Active',
+      scheduledTotal,
+      penaltyTotal,
+      totalBilled,
+      totalPaid,
+      repaid,
+      outstanding,
+      overpaid,
+      paidInstallments,
+      progress,
+    };
   }
 
   // Record a repayment: settle outstanding penalties first, then the oldest

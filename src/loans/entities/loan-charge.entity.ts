@@ -17,6 +17,11 @@ export class LoanCharge {
   @Column({ default: 0 })
   installmentN: number;
 
+  // Which overdue period this penalty covers (1 = the miss, 2 = one period late…).
+  // Together with installmentN this keeps per-period accrual idempotent.
+  @Column({ default: 1 })
+  period: number;
+
   @Column({ default: 'Late payment penalty' })
   type: string;
 

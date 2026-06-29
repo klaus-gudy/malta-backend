@@ -43,6 +43,12 @@ export class LoansController {
     return this.repayments.getCharges(id);
   }
 
+  // Repayment metrics (repaid, outstanding, overpaid, progress).
+  @Get(':id/summary')
+  summary(@Param('id') id: string) {
+    return this.repayments.getSummary(id);
+  }
+
   // Collections module: record a repayment against a loan.
   @Post(':id/payments')
   takePayment(@Param('id') id: string, @Body() dto: TakePaymentDto) {
