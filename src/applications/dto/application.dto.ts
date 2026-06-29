@@ -38,6 +38,8 @@ const ALL_STATUSES: ApplicationStatus[] = [
 
 export class PatchApplicationDto {
   @IsOptional() @IsIn(ALL_STATUSES) status?: ApplicationStatus;
+  @IsOptional() @IsString() customer?: string;
+  @IsOptional() @IsString() product?: string;
   @IsOptional() @IsString() purpose?: string;
   @IsOptional() @IsNumber() amount?: number;
   @IsOptional() @IsNumber() term?: number;
