@@ -89,13 +89,82 @@ export class CustomersService {
     if (dto.monthlyIncome !== undefined) {
       customer.monthlyIncome = Number(dto.monthlyIncome);
     }
-    return this.customers.save(customer);
+    await this.customers.save(customer);
+    // Completing the profile may satisfy KYC — recompute.
+    return this.recomputeKyc(id);
   }
 
   async setKyc(id: string, status: KycStatus): Promise<Customer> {
     const customer = await this.findOne(id);
     customer.kyc = status;
     return this.customers.save(customer);
+  }
+
+  // The profile fields required before a customer can be KYC-verified.
+  private readonly REQUIRED_PROFILE_FIELDS: (keyof Customer)[] = [
+    'name',
+    'phone',
+    'nida',
+    'region',
+    'address',
+    'occupation',
+  ];
+
+  private isProfileComplete(customer: Customer): boolean {
+    const fieldsFilled = this.REQUIRED_PROFILE_FIELDS.every(
+      (f) => String(customer[f] ?? '').trim() !== '',
+    );
+    return fieldsFilled && Number(customer.monthlyIncome) > 0;
+  }
+
+  /**
+   * Derive and persist a customer's KYC status from the current state:
+   *  - any document rejected            -> Rejected
+   *  - profile complete & all docs verified (and at least one doc) -> Verified
+   *  - otherwise                        -> Pending
+   * Called automatically whenever documents or the profile change.
+   */
+  async recomputeKyc(custId: string): Promise<Customer> {
+    const customer = await this.findOne(custId);
+    const docs = await this.documents.find({
+      where: { customerId: custId },
+    });
+
+    let next: KycStatus;
+    if (docs.some((d) => d.status === 'Rejected')) {
+      next = 'Rejected';
+    } else if (
+      this.isProfileComplete(customer) &&
+      docs.length > 0 &&
+      docs.every((d) => d.status === 'Verified')
+    ) {
+      next = 'Verified';
+    } else {
+      next = 'Pending';
+    }
+
+    if (customer.kyc !== next) {
+      customer.kyc = next;
+      await this.customers.save(customer);
+    }
+    return customer;
+  }
+
+  // What is still blocking KYC verification — surfaced to the UI.
+  async kycRequirements(custId: string) {
+    const customer = await this.findOne(custId);
+    const docs = await this.documents.find({ where: { customerId: custId } });
+    const missingFields = this.REQUIRED_PROFILE_FIELDS.filter(
+      (f) => String(customer[f] ?? '').trim() === '',
+    ) as string[];
+    if (Number(customer.monthlyIncome) <= 0) missingFields.push('monthlyIncome');
+    return {
+      kyc: customer.kyc,
+      missingFields,
+      totalDocuments: docs.length,
+      pendingDocuments: docs.filter((d) => d.status === 'Pending').length,
+      rejectedDocuments: docs.filter((d) => d.status === 'Rejected').length,
+    };
   }
 
   // ---------- DOCUMENTS ----------
@@ -135,6 +204,8 @@ export class CustomersService {
       content: dto.content,
     });
     await this.documents.save(doc);
+    // A new (unverified) document means KYC is no longer complete.
+    await this.recomputeKyc(custId);
     return this.toMeta(doc);
   }
 
@@ -146,6 +217,8 @@ export class CustomersService {
     if (!doc) throw new NotFoundException(`Document ${docId} not found`);
     doc.status = status;
     await this.documents.save(doc);
+    // Verifying/rejecting a document may change the customer's KYC status.
+    await this.recomputeKyc(doc.customerId);
     return this.toMeta(doc);
   }
 

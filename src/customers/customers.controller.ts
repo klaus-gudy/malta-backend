@@ -48,6 +48,12 @@ export class CustomersController {
     return this.customers.addDocument(id, dto);
   }
 
+  // What is still blocking KYC verification (missing fields / pending docs).
+  @Get(':id/kyc-requirements')
+  kycRequirements(@Param('id') id: string) {
+    return this.customers.kycRequirements(id);
+  }
+
   @Patch(':id/kyc')
   setKyc(@Param('id') id: string, @Body() dto: SetKycDto) {
     return this.customers.setKyc(id, dto.status);
