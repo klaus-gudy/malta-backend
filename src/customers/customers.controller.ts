@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import { SetDocStatusDto, SetKycDto } from './dto/set-kyc.dto';
 
 @Controller('customers')
@@ -29,9 +31,21 @@ export class CustomersController {
     return this.customers.findOne(id);
   }
 
+  // Edit customer profile details.
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() dto: UpdateCustomerDto) {
+    return this.customers.update(id, dto);
+  }
+
   @Get(':id/documents')
   documents(@Param('id') id: string) {
     return this.customers.documentsFor(id);
+  }
+
+  // Upload a new document (name + base64 contents) for a customer.
+  @Post(':id/documents')
+  uploadDocument(@Param('id') id: string, @Body() dto: UploadDocumentDto) {
+    return this.customers.addDocument(id, dto);
   }
 
   @Patch(':id/kyc')
@@ -39,9 +53,15 @@ export class CustomersController {
     return this.customers.setKyc(id, dto.status);
   }
 
-  // Document ids are synthetic (e.g. "CUS-1003-D3"); the customer routes own them.
+  // Verify or reject a document.
   @Patch('documents/:docId/status')
   setDocStatus(@Param('docId') docId: string, @Body() dto: SetDocStatusDto) {
     return this.customers.setDocStatus(docId, dto.status);
+  }
+
+  // Download/preview a document's contents.
+  @Get('documents/:docId/content')
+  documentContent(@Param('docId') docId: string) {
+    return this.customers.documentContent(docId);
   }
 }

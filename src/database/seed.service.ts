@@ -9,6 +9,7 @@ import { Loan } from '../loans/entities/loan.entity';
 import { User } from '../users/entities/user.entity';
 import { AuditEntry } from '../audit/entities/audit-entry.entity';
 import { UsersService } from '../users/users.service';
+import { CustomersService } from '../customers/customers.service';
 import type { ApplicationStatus, LoanStatus, RoleId } from '../common/enums';
 
 // Faithful port of the frontend's lib/seed.ts deterministic generator, so the
@@ -29,6 +30,7 @@ export class SeedService implements OnApplicationBootstrap {
     @InjectRepository(AuditEntry)
     private readonly audit: Repository<AuditEntry>,
     private readonly usersService: UsersService,
+    private readonly customersService: CustomersService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -56,6 +58,15 @@ export class SeedService implements OnApplicationBootstrap {
     const filled = await this.usersService.ensurePasswords();
     if (filled > 0) {
       this.logger.log(`Assigned demo password to ${filled} user(s).`);
+    }
+
+    // Give existing customers the standard KYC document set (one-time, when no
+    // documents exist yet). New customers start empty and upload their own.
+    const docCustomers = await this.customersService.ensureStandardDocuments();
+    if (docCustomers > 0) {
+      this.logger.log(
+        `Created standard documents for ${docCustomers} customer(s).`,
+      );
     }
   }
 }

@@ -8,6 +8,7 @@ import { Loan } from '../loans/entities/loan.entity';
 import { User } from '../users/entities/user.entity';
 import { AuditEntry } from '../audit/entities/audit-entry.entity';
 import { UsersModule } from '../users/users.module';
+import { CustomersModule } from '../customers/customers.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsersModule } from '../users/users.module';
       AuditEntry,
     ]),
     UsersModule,
+    CustomersModule,
   ],
   providers: [SeedService],
 })

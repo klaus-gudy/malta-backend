@@ -2,11 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Customer } from './entities/customer.entity';
-import { DocumentOverride } from './entities/document-override.entity';
+import { CustomerDocument } from './entities/customer-document.entity';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import { UpdateCustomerDto } from './dto/update-customer.dto';
+import { UploadDocumentDto } from './dto/upload-document.dto';
 import type { KycStatus } from '../common/enums';
 
-export interface CustomerDocument {
+// Public document shape (no `content`/`customerId`) — matches the frontend.
+export interface DocumentMeta {
   id: string;
   type: string;
   file: string;
@@ -15,13 +18,29 @@ export interface CustomerDocument {
   status: KycStatus;
 }
 
+// The standard KYC documents every customer is expected to provide.
+const STANDARD_DOCS = [
+  { suffix: 'D1', type: 'National ID (NIDA)', file: 'nida_front.jpg', size: '1.2 MB' },
+  { suffix: 'D2', type: 'Passport photo', file: 'passport_photo.jpg', size: '0.4 MB' },
+  { suffix: 'D3', type: 'Proof of residence', file: 'residence_letter.pdf', size: '0.8 MB' },
+  { suffix: 'D4', type: 'Business licence', file: 'business_licence.pdf', size: '1.1 MB' },
+];
+
+function humanSize(content: string): string {
+  const b64 = content.includes(',') ? content.split(',')[1] : content;
+  const bytes = Math.floor((b64.length * 3) / 4);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 @Injectable()
 export class CustomersService {
   constructor(
     @InjectRepository(Customer)
     private readonly customers: Repository<Customer>,
-    @InjectRepository(DocumentOverride)
-    private readonly overrides: Repository<DocumentOverride>,
+    @InjectRepository(CustomerDocument)
+    private readonly documents: Repository<CustomerDocument>,
   ) {}
 
   findAll(): Promise<Customer[]> {
@@ -63,37 +82,112 @@ export class CustomersService {
     return this.customers.save(customer);
   }
 
+  async update(id: string, dto: UpdateCustomerDto): Promise<Customer> {
+    const customer = await this.findOne(id);
+    // Only assign provided fields; numbers coerced for safety.
+    Object.assign(customer, dto);
+    if (dto.monthlyIncome !== undefined) {
+      customer.monthlyIncome = Number(dto.monthlyIncome);
+    }
+    return this.customers.save(customer);
+  }
+
   async setKyc(id: string, status: KycStatus): Promise<Customer> {
     const customer = await this.findOne(id);
     customer.kyc = status;
     return this.customers.save(customer);
   }
 
-  async documentsFor(custId: string): Promise<CustomerDocument[]> {
-    const customer = await this.findOne(custId);
-    const base: CustomerDocument[] = [
-      { id: custId + '-D1', type: 'National ID (NIDA)', file: 'nida_front.jpg', size: '1.2 MB', up: '2026-05-28', status: 'Verified' },
-      { id: custId + '-D2', type: 'Passport photo', file: 'passport_photo.jpg', size: '0.4 MB', up: '2026-05-28', status: 'Verified' },
-      { id: custId + '-D3', type: 'Proof of residence', file: 'residence_letter.pdf', size: '0.8 MB', up: '2026-05-29', status: 'Pending' },
-      { id: custId + '-D4', type: 'Business licence', file: 'business_licence.pdf', size: '1.1 MB', up: '2026-05-29', status: 'Pending' },
-    ];
-    if (customer.kyc === 'Rejected') base[2].status = 'Rejected';
+  // ---------- DOCUMENTS ----------
+  private toMeta(doc: CustomerDocument): DocumentMeta {
+    return {
+      id: doc.id,
+      type: doc.type,
+      file: doc.file,
+      size: doc.size,
+      up: doc.up,
+      status: doc.status,
+    };
+  }
 
-    const stored = await this.overrides.find();
-    const map = new Map(stored.map((o) => [o.docId, o.status]));
-    return base.map((d) => ({ ...d, status: map.get(d.id) ?? d.status }));
+  async documentsFor(custId: string): Promise<DocumentMeta[]> {
+    await this.findOne(custId);
+    const docs = await this.documents.find({
+      where: { customerId: custId },
+      order: { id: 'ASC' },
+    });
+    return docs.map((d) => this.toMeta(d));
+  }
+
+  async addDocument(
+    custId: string,
+    dto: UploadDocumentDto,
+  ): Promise<DocumentMeta> {
+    await this.findOne(custId);
+    const doc = this.documents.create({
+      id: `${custId}-U${Date.now().toString(36).toUpperCase()}`,
+      customerId: custId,
+      type: dto.name,
+      file: dto.fileName || dto.name,
+      size: humanSize(dto.content),
+      up: new Date().toISOString().slice(0, 10),
+      status: 'Pending',
+      content: dto.content,
+    });
+    await this.documents.save(doc);
+    return this.toMeta(doc);
   }
 
   async setDocStatus(
     docId: string,
     status: Extract<KycStatus, 'Verified' | 'Rejected'>,
-  ): Promise<CustomerDocument> {
-    await this.overrides.save({ docId, status });
-    // Return the affected document with the override applied.
-    const custId = docId.replace(/-D\d+$/, '');
-    const docs = await this.documentsFor(custId);
-    const doc = docs.find((d) => d.id === docId);
+  ): Promise<DocumentMeta> {
+    const doc = await this.documents.findOne({ where: { id: docId } });
     if (!doc) throw new NotFoundException(`Document ${docId} not found`);
-    return doc;
+    doc.status = status;
+    await this.documents.save(doc);
+    return this.toMeta(doc);
+  }
+
+  // Fetch a document's contents for download/preview.
+  async documentContent(docId: string) {
+    const doc = await this.documents
+      .createQueryBuilder('d')
+      .addSelect('d.content')
+      .where('d.id = :docId', { docId })
+      .getOne();
+    if (!doc) throw new NotFoundException(`Document ${docId} not found`);
+    return { id: doc.id, type: doc.type, file: doc.file, content: doc.content };
+  }
+
+  // The four standard KYC documents for a customer, with the demo status pattern.
+  private standardDocsFor(custId: string, kyc: KycStatus): CustomerDocument[] {
+    return STANDARD_DOCS.map((def, i) => {
+      let status: KycStatus = i < 2 ? 'Verified' : 'Pending';
+      if (i === 2 && kyc === 'Rejected') status = 'Rejected';
+      return this.documents.create({
+        id: `${custId}-${def.suffix}`,
+        customerId: custId,
+        type: def.type,
+        file: def.file,
+        size: def.size,
+        up: '2026-05-28',
+        status,
+        content: `data:text/plain;base64,${Buffer.from(
+          `Standard KYC document for ${custId}: ${def.type}`,
+        ).toString('base64')}`,
+      });
+    });
+  }
+
+  // One-time backfill: when no documents exist yet, give every customer the
+  // standard KYC document set (called from the seeder on boot).
+  async ensureStandardDocuments(): Promise<number> {
+    const docCount = await this.documents.count();
+    if (docCount > 0) return 0;
+    const customers = await this.customers.find();
+    const docs = customers.flatMap((c) => this.standardDocsFor(c.id, c.kyc));
+    await this.documents.save(docs);
+    return customers.length;
   }
 }
