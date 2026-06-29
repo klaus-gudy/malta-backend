@@ -10,6 +10,7 @@ import { User } from '../users/entities/user.entity';
 import { AuditEntry } from '../audit/entities/audit-entry.entity';
 import { UsersService } from '../users/users.service';
 import { CustomersService } from '../customers/customers.service';
+import { RepaymentsService } from '../loans/repayments.service';
 import type { ApplicationStatus, LoanStatus, RoleId } from '../common/enums';
 
 // Faithful port of the frontend's lib/seed.ts deterministic generator, so the
@@ -31,6 +32,7 @@ export class SeedService implements OnApplicationBootstrap {
     private readonly audit: Repository<AuditEntry>,
     private readonly usersService: UsersService,
     private readonly customersService: CustomersService,
+    private readonly repaymentsService: RepaymentsService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -67,6 +69,13 @@ export class SeedService implements OnApplicationBootstrap {
       this.logger.log(
         `Created standard documents for ${docCustomers} customer(s).`,
       );
+    }
+
+    // Generate repayment schedules for any loans that lack one (incl. seeded
+    // loans), accruing penalties for missed installments.
+    const scheduled = await this.repaymentsService.ensureSchedules();
+    if (scheduled > 0) {
+      this.logger.log(`Built repayment schedules for ${scheduled} loan(s).`);
     }
   }
 }

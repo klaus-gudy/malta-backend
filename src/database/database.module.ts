@@ -9,6 +9,7 @@ import { User } from '../users/entities/user.entity';
 import { AuditEntry } from '../audit/entities/audit-entry.entity';
 import { UsersModule } from '../users/users.module';
 import { CustomersModule } from '../customers/customers.module';
+import { LoansModule } from '../loans/loans.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { CustomersModule } from '../customers/customers.module';
     ]),
     UsersModule,
     CustomersModule,
+    LoansModule,
   ],
   providers: [SeedService],
 })

@@ -6,6 +6,8 @@ export class DisburseDto {
 }
 
 export class TakePaymentDto {
-  // Amount is recorded for the receipt; the schedule advances by one instalment.
-  @IsOptional() @IsNumber() @Min(0) amount?: number;
+  // Amount received; allocated to outstanding penalties then oldest installments.
+  @IsNumber() @Min(1) amount: number;
+  @IsOptional() @IsString() method?: string;
+  @IsOptional() @IsString() reference?: string;
 }

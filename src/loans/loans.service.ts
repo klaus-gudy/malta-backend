@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Loan } from './entities/loan.entity';
 import { ApplicationsService } from '../applications/applications.service';
 import { ProductsService } from '../products/products.service';
+import { RepaymentsService } from './repayments.service';
 
 @Injectable()
 export class LoansService {
@@ -12,6 +13,7 @@ export class LoansService {
     private readonly loans: Repository<Loan>,
     private readonly applications: ApplicationsService,
     private readonly products: ProductsService,
+    private readonly repayments: RepaymentsService,
   ) {}
 
   findAll(): Promise<Loan[]> {
@@ -47,14 +49,27 @@ export class LoansService {
     });
 
     await this.applications.patch(applicationId, { status: 'Disbursed' });
-    return this.loans.save(loan);
+    const saved = await this.loans.save(loan);
+    // Generate the repayment schedule for the new account.
+    await this.repayments.buildSchedule(saved);
+    return saved;
   }
 
-  // Record a repayment: advance one instalment, clearing an Overdue flag.
-  async takePayment(loanId: string, _amount?: number): Promise<Loan> {
-    const loan = await this.findOne(loanId);
-    loan.paid = Math.min(loan.term, loan.paid + 1);
-    if (loan.status === 'Overdue') loan.status = 'Active';
-    return this.loans.save(loan);
+  // Record a repayment — allocates across penalties + installments and returns
+  // the refreshed loan.
+  async takePayment(
+    loanId: string,
+    amount: number,
+    method?: string,
+    reference?: string,
+  ): Promise<Loan> {
+    await this.findOne(loanId); // 404 if missing
+    const { loan } = await this.repayments.recordPayment(
+      loanId,
+      amount,
+      method,
+      reference,
+    );
+    return loan;
   }
 }
