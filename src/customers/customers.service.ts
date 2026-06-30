@@ -3,9 +3,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Customer } from './entities/customer.entity';
 import { CustomerDocument } from './entities/customer-document.entity';
+import { CustomerAccount } from './entities/customer-account.entity';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UploadDocumentDto } from './dto/upload-document.dto';
+import {
+  CreateAccountDto,
+  UpdateAccountDto,
+} from './dto/customer-account.dto';
 import type { KycStatus } from '../common/enums';
 
 // Public document shape (no `content`/`customerId`) — matches the frontend.
@@ -41,6 +46,8 @@ export class CustomersService {
     private readonly customers: Repository<Customer>,
     @InjectRepository(CustomerDocument)
     private readonly documents: Repository<CustomerDocument>,
+    @InjectRepository(CustomerAccount)
+    private readonly accounts: Repository<CustomerAccount>,
   ) {}
 
   findAll(): Promise<Customer[]> {
@@ -261,6 +268,85 @@ export class CustomersService {
     const customers = await this.customers.find();
     const docs = customers.flatMap((c) => this.standardDocsFor(c.id, c.kyc));
     await this.documents.save(docs);
+    return customers.length;
+  }
+
+  // ---------- CUSTOMER ACCOUNTS ----------
+  async accountsFor(custId: string): Promise<CustomerAccount[]> {
+    await this.findOne(custId);
+    return this.accounts.find({
+      where: { customerId: custId },
+      order: { isPrimary: 'DESC' },
+    });
+  }
+
+  async addAccount(
+    custId: string,
+    dto: CreateAccountDto,
+  ): Promise<CustomerAccount> {
+    await this.findOne(custId);
+    if (dto.isPrimary) {
+      await this.accounts.update({ customerId: custId }, { isPrimary: false });
+    }
+    const existing = await this.accounts.count({ where: { customerId: custId } });
+    const acct = this.accounts.create({
+      customerId: custId,
+      channel: dto.channel,
+      accountNumber: dto.accountNumber,
+      accountName: dto.accountName || '',
+      isPrimary: dto.isPrimary ?? existing === 0,
+    });
+    return this.accounts.save(acct);
+  }
+
+  async updateAccount(
+    acctId: string,
+    dto: UpdateAccountDto,
+  ): Promise<CustomerAccount> {
+    const acct = await this.accounts.findOne({ where: { id: acctId } });
+    if (!acct) throw new NotFoundException(`Account ${acctId} not found`);
+    if (dto.isPrimary) {
+      await this.accounts.update(
+        { customerId: acct.customerId },
+        { isPrimary: false },
+      );
+    }
+    Object.assign(acct, dto);
+    return this.accounts.save(acct);
+  }
+
+  async deleteAccount(acctId: string): Promise<void> {
+    const acct = await this.accounts.findOne({ where: { id: acctId } });
+    if (!acct) throw new NotFoundException(`Account ${acctId} not found`);
+    await this.accounts.remove(acct);
+  }
+
+  async ensureStandardAccounts(): Promise<number> {
+    const count = await this.accounts.count();
+    if (count > 0) return 0;
+    const customers = await this.customers.find();
+    const accts: CustomerAccount[] = [];
+    for (const c of customers) {
+      accts.push(
+        this.accounts.create({
+          customerId: c.id,
+          channel: 'M-Pesa',
+          accountNumber: c.phone || '+255 712 000 000',
+          accountName: c.name,
+          isPrimary: true,
+        }),
+      );
+      accts.push(
+        this.accounts.create({
+          customerId: c.id,
+          channel: 'Bank — CRDB',
+          accountNumber: '0150' + c.id.replace(/\D/g, '') + '001',
+          accountName: c.name,
+          isPrimary: false,
+        }),
+      );
+    }
+    await this.accounts.save(accts);
     return customers.length;
   }
 }

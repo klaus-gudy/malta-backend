@@ -71,6 +71,13 @@ export class SeedService implements OnApplicationBootstrap {
       );
     }
 
+    const acctCustomers = await this.customersService.ensureStandardAccounts();
+    if (acctCustomers > 0) {
+      this.logger.log(
+        `Created standard accounts for ${acctCustomers} customer(s).`,
+      );
+    }
+
     // Generate repayment schedules for any loans that lack one (incl. seeded
     // loans), accruing penalties for missed installments.
     const scheduled = await this.repaymentsService.ensureSchedules();

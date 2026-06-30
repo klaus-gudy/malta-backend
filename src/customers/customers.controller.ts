@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -11,6 +12,10 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UploadDocumentDto } from './dto/upload-document.dto';
 import { SetDocStatusDto, SetKycDto } from './dto/set-kyc.dto';
+import {
+  CreateAccountDto,
+  UpdateAccountDto,
+} from './dto/customer-account.dto';
 
 @Controller('customers')
 export class CustomersController {
@@ -69,5 +74,29 @@ export class CustomersController {
   @Get('documents/:docId/content')
   documentContent(@Param('docId') docId: string) {
     return this.customers.documentContent(docId);
+  }
+
+  // ---------- CUSTOMER ACCOUNTS ----------
+  @Get(':id/accounts')
+  accounts(@Param('id') id: string) {
+    return this.customers.accountsFor(id);
+  }
+
+  @Post(':id/accounts')
+  addAccount(@Param('id') id: string, @Body() dto: CreateAccountDto) {
+    return this.customers.addAccount(id, dto);
+  }
+
+  @Patch('accounts/:acctId')
+  updateAccount(
+    @Param('acctId') acctId: string,
+    @Body() dto: UpdateAccountDto,
+  ) {
+    return this.customers.updateAccount(acctId, dto);
+  }
+
+  @Delete('accounts/:acctId')
+  deleteAccount(@Param('acctId') acctId: string) {
+    return this.customers.deleteAccount(acctId);
   }
 }
