@@ -8,7 +8,8 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import type { ActiveInactive } from '../../common/enums';
+import type { ActiveInactive, RoleId } from '../../common/enums';
+import { ROLE_IDS } from '../../common/enums';
 
 export const FREQUENCIES = ['Weekly', 'Bi-weekly', 'Monthly'];
 export const METHODS = ['Flat', 'Reducing balance'];
@@ -83,6 +84,12 @@ export class CreateProductDto {
   @IsOptional()
   @IsString()
   desc?: string;
+
+  // Acting role — stamps the audit timeline (who created / updated). Not a
+  // product field; excluded when persisting.
+  @IsOptional()
+  @IsIn(ROLE_IDS)
+  role?: RoleId;
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {}

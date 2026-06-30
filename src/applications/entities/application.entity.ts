@@ -1,8 +1,9 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type { ApplicationStatus } from '../../common/enums';
+import { AuditableEntity } from '../../common/auditable.entity';
 
 @Entity('applications')
-export class Application {
+export class Application extends AuditableEntity {
   @PrimaryColumn()
   id: string;
 

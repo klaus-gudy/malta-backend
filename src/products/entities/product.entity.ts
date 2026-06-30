@@ -1,11 +1,12 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type { ActiveInactive } from '../../common/enums';
+import { AuditableEntity } from '../../common/auditable.entity';
 
 const intTransformer = { to: (v: number) => v, from: (v: string) => Number(v) };
 const floatCol = { type: 'numeric' as const, transformer: { to: (v: number) => v, from: (v: string) => Number(v) } };
 
 @Entity('products')
-export class Product {
+export class Product extends AuditableEntity {
   @PrimaryColumn()
   id: string;
 

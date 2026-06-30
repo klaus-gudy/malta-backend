@@ -10,6 +10,7 @@ import { LoansModule } from './loans/loans.module';
 import { UsersModule } from './users/users.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { DatabaseModule } from './database/database.module';
 
 @Module({
@@ -36,6 +37,7 @@ import { DatabaseModule } from './database/database.module';
     LoansModule,
     UsersModule,
     AuditModule,
+    DashboardModule,
     DatabaseModule,
   ],
   controllers: [AppController],

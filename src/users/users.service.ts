@@ -5,16 +5,31 @@ import * as bcrypt from 'bcryptjs';
 import { User } from './entities/user.entity';
 import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 import { BCRYPT_ROUNDS, DEMO_PASSWORD } from '../common/auth.constants';
+import { AuditService } from '../audit/audit.service';
+import { roleMeta } from '../common/role-meta';
 
 // A created user plus the one-time plaintext temp password (never persisted
 // or returned again) so the admin can share it / test sign-in.
 export type CreatedUser = User & { tempPassword: string };
+
+// Human labels for the user fields tracked in the change log.
+const USER_FIELD_LABELS: Record<string, string> = {
+  name: 'Name',
+  email: 'Email',
+  role: 'Role',
+  branch: 'Branch',
+  status: 'Status',
+};
+
+// User management is admin-gated, so events are attributed to the admin actor.
+const ADMIN_ACTOR = AuditService.actorFor('admin');
 
 @Injectable()
 export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly users: Repository<User>,
+    private readonly audit: AuditService,
   ) {}
 
   findAll(): Promise<User[]> {
@@ -38,21 +53,60 @@ export class UsersService {
       last: new Date().toISOString().slice(0, 16).replace('T', ' '),
       password: await bcrypt.hash(tempPassword, BCRYPT_ROUNDS),
     });
+    user.createdBy = ADMIN_ACTOR.actor;
+    user.updatedBy = ADMIN_ACTOR.actor;
     const saved = await this.users.save(user);
+    await this.audit.log(saved.id, {
+      ...ADMIN_ACTOR,
+      action: 'User created',
+      detail: `${roleMeta[saved.role].label} · ${saved.branch}`,
+    });
     delete saved.password; // never expose the hash
     return { ...saved, tempPassword };
   }
 
   async update(id: string, dto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
+    const changes = this.diff(user, dto);
     Object.assign(user, dto);
-    return this.users.save(user);
+    user.updatedBy = ADMIN_ACTOR.actor;
+    const saved = await this.users.save(user);
+    if (changes.length) {
+      await this.audit.log(id, {
+        ...ADMIN_ACTOR,
+        action: 'User updated',
+        detail: changes.join('; '),
+      });
+    }
+    return saved;
   }
 
   async toggle(id: string): Promise<User> {
     const user = await this.findOne(id);
     user.status = user.status === 'Active' ? 'Inactive' : 'Active';
-    return this.users.save(user);
+    user.updatedBy = ADMIN_ACTOR.actor;
+    const saved = await this.users.save(user);
+    await this.audit.log(id, {
+      ...ADMIN_ACTOR,
+      action: saved.status === 'Active' ? 'User activated' : 'User deactivated',
+      detail: `Account ${saved.status === 'Active' ? 'enabled' : 'disabled'}`,
+    });
+    return saved;
+  }
+
+  // Build a "Field: old → new" list for the user fields that changed.
+  private diff(current: User, incoming: Partial<User>): string[] {
+    const out: string[] = [];
+    for (const [key, next] of Object.entries(incoming)) {
+      if (next === undefined || !(key in USER_FIELD_LABELS)) continue;
+      const prev = (current as unknown as Record<string, unknown>)[key];
+      const label = USER_FIELD_LABELS[key];
+      const fmtVal = (v: unknown) =>
+        key === 'role' ? roleMeta[v as keyof typeof roleMeta]?.label ?? String(v) : String(v);
+      if (String(prev) === String(next)) continue;
+      out.push(`${label}: ${fmtVal(prev)} → ${fmtVal(next)}`);
+    }
+    return out;
   }
 
   // Used by auth: look up by full email or its local-part (e.g. "joseph.admin"

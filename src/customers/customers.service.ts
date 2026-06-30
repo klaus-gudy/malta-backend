@@ -11,6 +11,7 @@ import {
   CreateAccountDto,
   UpdateAccountDto,
 } from './dto/customer-account.dto';
+import { AuditService } from '../audit/audit.service';
 import type { KycStatus } from '../common/enums';
 
 // Public document shape (no `content`/`customerId`) — matches the frontend.
@@ -48,7 +49,18 @@ export class CustomersService {
     private readonly documents: Repository<CustomerDocument>,
     @InjectRepository(CustomerAccount)
     private readonly accounts: Repository<CustomerAccount>,
+    private readonly audit: AuditService,
   ) {}
+
+  // Customer-side events are recorded under the customer id. Most are system- or
+  // officer-driven; the actor defaults to "System" unless a role is supplied.
+  private logEvent(custId: string, action: string, detail = '') {
+    return this.audit.log(custId, {
+      ...AuditService.actorFor(),
+      action,
+      detail,
+    });
+  }
 
   findAll(): Promise<Customer[]> {
     return this.customers.find({ order: { id: 'DESC' } });
@@ -86,7 +98,9 @@ export class CustomersService {
       joined: new Date().toISOString().slice(0, 10),
       photo: '#9a8b6f',
     });
-    return this.customers.save(customer);
+    const saved = await this.customers.save(customer);
+    await this.logEvent(id, 'Customer registered', 'Profile created — KYC pending');
+    return saved;
   }
 
   async update(id: string, dto: UpdateCustomerDto): Promise<Customer> {
@@ -97,14 +111,20 @@ export class CustomersService {
       customer.monthlyIncome = Number(dto.monthlyIncome);
     }
     await this.customers.save(customer);
+    await this.logEvent(id, 'Profile updated', 'Customer details edited');
     // Completing the profile may satisfy KYC — recompute.
     return this.recomputeKyc(id);
   }
 
   async setKyc(id: string, status: KycStatus): Promise<Customer> {
     const customer = await this.findOne(id);
+    const changed = customer.kyc !== status;
     customer.kyc = status;
-    return this.customers.save(customer);
+    const saved = await this.customers.save(customer);
+    if (changed) {
+      await this.logEvent(id, `KYC ${status.toLowerCase()}`, 'Status set by reviewer');
+    }
+    return saved;
   }
 
   // The profile fields required before a customer can be KYC-verified.
@@ -153,6 +173,7 @@ export class CustomersService {
     if (customer.kyc !== next) {
       customer.kyc = next;
       await this.customers.save(customer);
+      await this.logEvent(custId, `KYC ${next.toLowerCase()}`, 'Status auto-updated');
     }
     return customer;
   }
@@ -211,6 +232,7 @@ export class CustomersService {
       content: dto.content,
     });
     await this.documents.save(doc);
+    await this.logEvent(custId, 'Document uploaded', dto.name);
     // A new (unverified) document means KYC is no longer complete.
     await this.recomputeKyc(custId);
     return this.toMeta(doc);
@@ -224,6 +246,11 @@ export class CustomersService {
     if (!doc) throw new NotFoundException(`Document ${docId} not found`);
     doc.status = status;
     await this.documents.save(doc);
+    await this.logEvent(
+      doc.customerId,
+      status === 'Verified' ? 'Document verified' : 'Document rejected',
+      doc.type,
+    );
     // Verifying/rejecting a document may change the customer's KYC status.
     await this.recomputeKyc(doc.customerId);
     return this.toMeta(doc);
@@ -298,7 +325,9 @@ export class CustomersService {
       accountName: dto.accountName || '',
       isPrimary: dto.isPrimary ?? existing === 0,
     });
-    return this.accounts.save(acct);
+    const saved = await this.accounts.save(acct);
+    await this.logEvent(custId, 'Account added', `${dto.channel} · ${dto.accountNumber}`);
+    return saved;
   }
 
   async updateAccount(
@@ -322,6 +351,7 @@ export class CustomersService {
     if (!acct) throw new NotFoundException(`Account ${acctId} not found`);
     const custId = acct.customerId;
     await this.accounts.remove(acct);
+    await this.logEvent(custId, 'Account removed', `${acct.channel} · ${acct.accountNumber}`);
     // Keep exactly one primary: if the remaining accounts have no primary
     // (e.g. the primary was just deleted, or a single account is left), promote
     // the first remaining account.

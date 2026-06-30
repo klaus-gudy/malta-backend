@@ -84,6 +84,81 @@ export class SeedService implements OnApplicationBootstrap {
     if (scheduled > 0) {
       this.logger.log(`Built repayment schedules for ${scheduled} loan(s).`);
     }
+
+    // Backfill a baseline activity timeline for demo customers and loans that
+    // have none yet, so the new Activity tabs aren't empty out of the box.
+    const backfilled = await this.backfillActivity();
+    if (backfilled > 0) {
+      this.logger.log(`Backfilled activity timeline for ${backfilled} entity(ies).`);
+    }
+  }
+
+  // Idempotent: only adds entries for entities that currently have none.
+  private async backfillActivity(): Promise<number> {
+    const existing = await this.audit.find();
+    const seen = new Set(existing.map((e) => e.entityId));
+    const rows: Partial<AuditEntry>[] = [];
+
+    for (const c of await this.customers.find()) {
+      if (seen.has(c.id)) continue;
+      const joined = c.joined || '2026-01-01';
+      rows.push({
+        entityId: c.id,
+        actor: 'System',
+        role: 'System',
+        action: 'Customer registered',
+        detail: 'Profile created',
+        time: `${joined} 09:00`,
+      });
+      rows.push({
+        entityId: c.id,
+        actor: 'System',
+        role: 'System',
+        action: `KYC ${String(c.kyc).toLowerCase()}`,
+        detail: 'Status on record',
+        time: `${joined} 09:05`,
+      });
+    }
+
+    for (const l of await this.loans.find()) {
+      if (seen.has(l.id)) continue;
+      const disbursed = l.disbursed || '2026-01-01';
+      rows.push({
+        entityId: l.id,
+        actor: 'Said Juma',
+        role: 'Operations Officer',
+        action: 'Loan disbursed',
+        detail: `Account opened via ${l.channel || 'bank transfer'}`,
+        time: `${disbursed} 10:00`,
+      });
+    }
+
+    for (const p of await this.products.find()) {
+      if (seen.has(p.id)) continue;
+      rows.push({
+        entityId: p.id,
+        actor: 'Joseph Kimaro',
+        role: 'Administrator',
+        action: 'Product created',
+        detail: `${p.name} · ${p.rate}% ${p.method} · ${p.minTerm}–${p.maxTerm} ${String(p.freq).toLowerCase()}`,
+        time: '2026-01-02 08:00',
+      });
+    }
+
+    for (const u of await this.users.find()) {
+      if (seen.has(u.id)) continue;
+      rows.push({
+        entityId: u.id,
+        actor: 'Joseph Kimaro',
+        role: 'Administrator',
+        action: 'User created',
+        detail: `${u.branch} branch`,
+        time: '2026-01-02 08:30',
+      });
+    }
+
+    if (rows.length) await this.audit.save(rows);
+    return rows.length;
   }
 }
 

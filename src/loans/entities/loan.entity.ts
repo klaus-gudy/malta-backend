@@ -1,10 +1,16 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type { LoanStatus } from '../../common/enums';
+import { AuditableEntity } from '../../common/auditable.entity';
 
 @Entity('loans')
-export class Loan {
+export class Loan extends AuditableEntity {
   @PrimaryColumn()
   id: string;
+
+  // The application this loan was disbursed from — links the loan back to its
+  // origination trail (submitted / reviewed / approved).
+  @Column({ default: '' })
+  applicationId: string;
 
   @Column()
   customer: string;

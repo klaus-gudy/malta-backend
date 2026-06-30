@@ -13,8 +13,20 @@ import {
 import { roleMeta } from '../common/role-meta';
 import { ProductsService } from '../products/products.service';
 import { CustomersService } from '../customers/customers.service';
+import { AuditService } from '../audit/audit.service';
+import type { ApplicationStatus, RoleId } from '../common/enums';
 
 const tzs = (n: number) => `TZS ${Number(n).toLocaleString('en-US')}`;
+
+// Human-readable timeline action + detail for a status transition.
+const STATUS_EVENT: Partial<
+  Record<ApplicationStatus, { action: string; detail: string }>
+> = {
+  'Under Review': { action: 'Moved to review', detail: 'Assessment started' },
+  Approved: { action: 'Application approved', detail: 'Cleared for disbursement' },
+  Rejected: { action: 'Application rejected', detail: 'Did not meet criteria' },
+  Cancelled: { action: 'Application cancelled', detail: '' },
+};
 
 @Injectable()
 export class ApplicationsService {
@@ -23,6 +35,7 @@ export class ApplicationsService {
     private readonly applications: Repository<Application>,
     private readonly products: ProductsService,
     private readonly customers: CustomersService,
+    private readonly audit: AuditService,
   ) {}
 
   findAll(): Promise<Application[]> {
@@ -69,6 +82,7 @@ export class ApplicationsService {
     const n = count + 43;
     const id = 'LAP-2026-00' + n;
     const role = dto.role ?? 'officer';
+    const actor = AuditService.actorFor(role);
     const app = this.applications.create({
       id,
       customer: dto.customer,
@@ -80,13 +94,31 @@ export class ApplicationsService {
       officer: roleMeta[role].name,
       created: new Date().toISOString().slice(0, 10),
       docs: Number(dto.docs ?? (dto.status === 'Draft' ? 1 : 2)),
+      createdBy: actor.actor,
+      updatedBy: actor.actor,
     });
-    return this.applications.save(app);
+    const saved = await this.applications.save(app);
+    await this.audit.log(id, {
+      ...actor,
+      action: dto.status === 'Draft' ? 'Application drafted' : 'Application submitted',
+      detail: `${tzs(amount)} over ${term} months`,
+    });
+    return saved;
   }
 
   async patch(id: string, patch: PatchApplicationDto): Promise<Application> {
     const app = await this.findOne(id);
-    Object.assign(app, patch);
-    return this.applications.save(app);
+    const { role, ...fields } = patch;
+    const statusChanged = fields.status && fields.status !== app.status;
+    const actor = AuditService.actorFor(role);
+    Object.assign(app, fields);
+    app.updatedBy = actor.actor;
+    const saved = await this.applications.save(app);
+    // Record the lifecycle transition (review / approve / reject). "Disbursed"
+    // is logged against the loan instead, so it's intentionally skipped here.
+    if (statusChanged && fields.status && STATUS_EVENT[fields.status]) {
+      await this.audit.log(id, { ...actor, ...STATUS_EVENT[fields.status]! });
+    }
+    return saved;
   }
 }

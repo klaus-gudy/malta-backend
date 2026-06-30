@@ -19,12 +19,18 @@ export class LoansController {
   // Disbursements module: create a loan from an approved application.
   @Post('disburse')
   disburse(@Body() dto: DisburseDto) {
-    return this.loans.disburse(dto.applicationId, dto.channel);
+    return this.loans.disburse(dto.applicationId, dto.channel, dto.role);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.loans.findOne(id);
+  }
+
+  // Full lifecycle activity timeline (application origination + loan events).
+  @Get(':id/activity')
+  activity(@Param('id') id: string) {
+    return this.loans.loanActivity(id);
   }
 
   // Repayment schedule (installments), transactions and accrued charges.
@@ -52,6 +58,12 @@ export class LoansController {
   // Collections module: record a repayment against a loan.
   @Post(':id/payments')
   takePayment(@Param('id') id: string, @Body() dto: TakePaymentDto) {
-    return this.loans.takePayment(id, dto.amount, dto.method, dto.reference);
+    return this.loans.takePayment(
+      id,
+      dto.amount,
+      dto.method,
+      dto.reference,
+      dto.role,
+    );
   }
 }

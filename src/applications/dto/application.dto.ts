@@ -45,4 +45,7 @@ export class PatchApplicationDto {
   @IsOptional() @IsNumber() term?: number;
   @IsOptional() @IsString() officer?: string;
   @IsOptional() @IsNumber() docs?: number;
+
+  // Acting role — used to stamp the audit timeline (who reviewed / approved).
+  @IsOptional() @IsIn(ROLE_IDS) role?: RoleId;
 }

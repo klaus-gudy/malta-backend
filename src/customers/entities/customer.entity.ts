@@ -1,8 +1,9 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type { CustomerStatus, KycStatus } from '../../common/enums';
+import { AuditableEntity } from '../../common/auditable.entity';
 
 @Entity('customers')
-export class Customer {
+export class Customer extends AuditableEntity {
   // Business id e.g. "CUS-1001" — kept as the PK to match the frontend contract.
   @PrimaryColumn()
   id: string;

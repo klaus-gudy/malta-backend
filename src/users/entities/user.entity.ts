@@ -1,8 +1,9 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import type { ActiveInactive, RoleId } from '../../common/enums';
+import { AuditableEntity } from '../../common/auditable.entity';
 
 @Entity('users')
-export class User {
+export class User extends AuditableEntity {
   @PrimaryColumn()
   id: string;
 
