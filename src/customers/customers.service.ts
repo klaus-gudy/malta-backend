@@ -274,6 +274,8 @@ export class CustomersService {
   // ---------- CUSTOMER ACCOUNTS ----------
   async accountsFor(custId: string): Promise<CustomerAccount[]> {
     await this.findOne(custId);
+    // Self-heal: a customer with accounts should always have one primary.
+    await this.ensurePrimaryAccount(custId);
     return this.accounts.find({
       where: { customerId: custId },
       order: { isPrimary: 'DESC' },
@@ -318,7 +320,24 @@ export class CustomersService {
   async deleteAccount(acctId: string): Promise<void> {
     const acct = await this.accounts.findOne({ where: { id: acctId } });
     if (!acct) throw new NotFoundException(`Account ${acctId} not found`);
+    const custId = acct.customerId;
     await this.accounts.remove(acct);
+    // Keep exactly one primary: if the remaining accounts have no primary
+    // (e.g. the primary was just deleted, or a single account is left), promote
+    // the first remaining account.
+    await this.ensurePrimaryAccount(custId);
+  }
+
+  // Guarantee a customer with at least one account has exactly one primary.
+  private async ensurePrimaryAccount(custId: string): Promise<void> {
+    const accounts = await this.accounts.find({
+      where: { customerId: custId },
+      order: { id: 'ASC' },
+    });
+    if (accounts.length === 0) return;
+    if (accounts.some((a) => a.isPrimary)) return;
+    accounts[0].isPrimary = true;
+    await this.accounts.save(accounts[0]);
   }
 
   async ensureStandardAccounts(): Promise<number> {
